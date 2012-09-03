@@ -79,6 +79,7 @@ class Controller(wsgi.Controller):
         #return self._view_builder.index(req, flavors)
 	project_id=str(req.environ['HTTP_X_TENANT_ID'])
 	context = req.environ['nova.context']
+	context = context.elevated()
 
         networks = db.network_get_all(context)
         nets=[dict(network.iteritems()) for network in networks]
@@ -125,7 +126,7 @@ class Controller(wsgi.Controller):
 	ret_net_list['networks']=net_list
 	print ret_net_list
 
-	return str(ret_net_list)
+	return ret_net_list
 
 	
 
@@ -156,22 +157,28 @@ class Controller(wsgi.Controller):
     @wsgi.action("create")
     @wsgi.serializers(xml=NetworkTemplate)
     def _create(self, req, body):
-        #authorize(context)
-
+	context = req.environ['nova.context']
+	context = context.elevated()
         vals = body['network']
         name = vals['name']
 	size = vals['size']
 	project_id=str(req.environ['HTTP_X_TENANT_ID'])
 	print FLAGS.network_manager	
 	cidr = self.get_new_cidr(size)
-	#self.create_network(label=name, fixed_range_v4=cidr, num_networks=1,
-        #       network_size=size, multi_host=None, vlan_start=None,
-        #       vpn_start=None, fixed_range_v6=None, gateway=None,
-        #       gateway_v6=None, bridge=None, bridge_interface=None,
-        #       dns1=None, dns2=None, project_id=None, priority=None,
-        #       uuid=None, fixed_cidr=None)
+	print cidr
+	print"!!!!!!!!!!!!!!!!strat creating"
+	self.create_network(context=context, label=name, fixed_range_v4=cidr, num_networks=1,
+               network_size=size, multi_host=None, vlan_start=None,
+               vpn_start=None, fixed_range_v6=None, gateway=None,
+               gateway_v6=None, bridge=None, bridge_interface=None,
+               dns1=None, dns2=None, project_id=project_id, priority=None,
+               uuid=None, fixed_cidr=None)
 	print cidr	
-        return "Got it!"
+	db_net = db.network_get_by_cidr(context, cidr)
+	net = dict(db_net.iteritems())
+	ret_net={}
+	ret_net['network']={'id':net['uuid'],'name':net['label']}
+        return ret_net
 
     def get_new_cidr(self, size=256):
 	cidr = ""
@@ -180,7 +187,7 @@ class Controller(wsgi.Controller):
 	mask=int(32-math.log(size,2))
 	is_used = False
 	#get all cidrs, if cidr=10.0.3.0/24 then subnet=3
-	for network in db.network_get_all(context.get_admin_context()):
+	for network in db.network_get_all(context):
 	    cidrs.append(str(network.cidr))
 	    subnets.append(str(network.cidr).split('.')[2])
 	#get a new unused subnet id
@@ -216,7 +223,7 @@ class Controller(wsgi.Controller):
                           _('VlanID'),
                           _('project'),
                           _("uuid"))
-        for network in db.network_get_all(context.get_admin_context()):
+        for network in db.network_get_all(context):
             print _fmt % (network.id,
                           network.cidr,
                           network.cidr_v6,
@@ -229,7 +236,7 @@ class Controller(wsgi.Controller):
 	    print FLAGS.fixed_range
 
 
-    def create_network(self, label=None, fixed_range_v4=None, num_networks=None,
+    def create_network(self, context, label=None, fixed_range_v4=None, num_networks=None,
                network_size=None, multi_host=None, vlan_start=None,
                vpn_start=None, fixed_range_v6=None, gateway=None,
                gateway_v6=None, bridge=None, bridge_interface=None,
@@ -291,7 +298,7 @@ class Controller(wsgi.Controller):
 
 	# create the network
         net_manager = utils.import_object(FLAGS.network_manager)
-        net_manager.create_networks(context.get_admin_context(),
+        net_manager.create_networks(context,
                                     label=label,
                                     cidr=fixed_range_v4,
                                     multi_host=multi_host,
