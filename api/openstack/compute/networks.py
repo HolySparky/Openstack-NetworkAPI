@@ -97,11 +97,17 @@ class Controller(wsgi.Controller):
 	    else:
 		net_vm_dict[net_id] = [vm_id]
 	print net_vm_dict
+
+
 	#Go through the dict , filter by this project and get detailed infos	
 	#instance_get(context, instance_id)
 	net_list = []
 	for netID in net_vm_dict:
-	    networks= db.network_get(context, netID)
+	    try:
+	        networks= db.network_get(context, netID)
+	    except exception.NetworkNotFound:
+		print " network not found"
+		continue
 	    net = dict(networks.iteritems())
 	    print str(net['project_id'])
 	    if net['project_id']==None or net['project_id']==project_id:
@@ -118,10 +124,42 @@ class Controller(wsgi.Controller):
 		    if vm['project_id']==project_id:
 		        print "My VM"
 			vm_info = {}
+			#Get vm infos for each VM
 			vm_info['name']=str(vm['hostname'])
 			vm_info['id']=str(vm['uuid'])
+			vm_info['vm_state']=str(vm['vm_state'])
+			#Get fixed_ips for each VM
+			fixed_ips = db.fixed_ip_get_by_instance(context, vmID)
+			fixed_ip_info = []
+			for ip in fixed_ips:
+			    fixed_ip_info.append(str(dict(ip.iteritems())['address']))
+			vm_info['fixed_ips'] = fixed_ip_info
+			#Get Floating_ips for each VM
+			floating_ip_info = []
+			for fixed_ip in fixed_ips:
+			    
+			    try:
+			        floating_ips = db.floating_ip_get_by_fixed_ip_id(context, str(dict(fixed_ip.iteritems())['id']))
+			    except exception.FloatingIpNotFoundForAddress:
+				print "floating not found"
+				continue
+			    if floating_ips != None:
+			        for floating_ip in floating_ips:
+				    floating_ip_info.append(str(dict(floating_ip.iteritems())['address']))
+			vm_info['floating_ips']=floating_ip_info
 			net_info['vm'].append(vm_info)
 
+	for net in nets:
+	    if net['id'] in net_vm_dict:
+		print "Existed network"
+	    else:
+		net_info = {}
+                net_info['id']=str(net['uuid'])
+                net_info['name']=str(net['label'])
+                net_info['cidr']=str(net['cidr'])
+                net_info['vm']=[]
+                net_list.append(net_info)
+	
 	ret_net_list={}
 	ret_net_list['networks']=net_list
 	print ret_net_list
@@ -159,12 +197,14 @@ class Controller(wsgi.Controller):
     def _create(self, req, body):
 	context = req.environ['nova.context']
 	context = context.elevated()
+	print "context!!"
+	print context.to_dict()
         vals = body['network']
         name = vals['name']
 	size = vals['size']
 	project_id=str(req.environ['HTTP_X_TENANT_ID'])
 	print FLAGS.network_manager	
-	cidr = self.get_new_cidr(size)
+	cidr = self.get_new_cidr(context, size)
 	print cidr
 	print"!!!!!!!!!!!!!!!!strat creating"
 	self.create_network(context=context, label=name, fixed_range_v4=cidr, num_networks=1,
@@ -177,10 +217,10 @@ class Controller(wsgi.Controller):
 	db_net = db.network_get_by_cidr(context, cidr)
 	net = dict(db_net.iteritems())
 	ret_net={}
-	ret_net['network']={'id':net['uuid'],'name':net['label']}
+	ret_net['network']={'id':net['uuid'],'name':net['label'],'cidr':net['cidr']}
         return ret_net
 
-    def get_new_cidr(self, size=256):
+    def get_new_cidr(self, context, size=256):
 	cidr = ""
 	cidrs = []		
 	subnets = []
